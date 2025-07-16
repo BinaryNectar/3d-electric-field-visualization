@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Electric Field Visualization</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+      #info {
+        position: absolute;
+        top: 10px;
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-family: Arial, sans-serif;
+        z-index: 10;
+      }
+      #legend {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        font-family: Arial, sans-serif;
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 14px;
+      }
+      .legend-item {
+        display: flex;
+        align-items: center;
+        margin: 5px 0;
+      }
+      .color-box {
+        width: 20px;
+        height: 20px;
+        margin-right: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.146.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      // Constants
+      const k = 9e9; // Coulomb constant (simplified for visualization)
+      const EPSILON_0 = 8.85e-12; // Permittivity of free space
+      const MAX_FIELD_STRENGTH = 1e11; // For normalization
+      const FIELD_LINE_SEGMENTS = 20;
+      const FIELD_LINE_POINTS = 100;
+
+      // Global variables
+      let scene, camera, renderer, controls, ambientLight, directionalLight;
+      let gridHelper, axesHelper;
+      let fieldLinesGroup, fieldVectorsGroup, charges;
+
+      init();
+
+      // *** Initialization ***
+      function init() {
+        // primary setup
+        initScene();
+        initCamera();
+        initRenderer();
+        initControls();
+        initLighting();
+
+        // graphics
+        initHelperGraphics();
+        initFieldLinesGroup();
+        initFieldVectorsGroup();
+        initCharges();
+      }
+
+      // *** Scene Setup ***
+      function initScene() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000); // Black background
+      }
+
+      // *** Camera Setup ***
+      function initCamera() {
+        camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        camera.position.set(0, 0, 20);
+      }
+
+      // *** Renderer Setup ***
+      function initRenderer() {
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+      }
+
+      // *** Controls Setup ***
+      function initControls() {
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+      }
+
+      // *** Lighting Setup ***
+      function initLighting() {
+        // Lighting
+        ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+
+        directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+      }
+
+      // *** Helper Graphics Setup ***
+      function initHelperGraphics() {
+        // Grid helper
+        gridHelper = new THREE.GridHelper(30, 30, 0x555555, 0x333333);
+        scene.add(gridHelper);
+
+        // Axes helper
+        axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+      }
+
+      // *** Field Lines Setup ***
+      function initFieldLinesGroup() {
+        // Field lines group
+        fieldLinesGroup = new THREE.Group();
+        scene.add(fieldLinesGroup);
+      }
+
+      // *** Field Vectors Setup ***
+      function initFieldVectorsGroup() {
+        // Field vectors group
+        fieldVectorsGroup = new THREE.Group();
+        scene.add(fieldVectorsGroup);
+      }
+
+      // *** Charges Setup ***
+      function initCharges() {
+        // Charges
+        charges = [
+          { position: new THREE.Vector3(3, 0, 0), value: 1e-9 }, // +1 nC
+          { position: new THREE.Vector3(-3, 0, 0), value: -1e-9 }, // -1 nC
+        ];
+
+        // Create charge visualizations
+        charges.forEach((charge) => {
+          const geometry = new THREE.SphereGeometry(0.5, 32, 32);
+          const material = new THREE.MeshPhongMaterial({
+            color: charge.value > 0 ? 0xff0000 : 0x0000ff,
+            emissive: charge.value > 0 ? 0xff4444 : 0x4444ff,
+            emissiveIntensity: 0.5,
+          });
+          const sphere = new THREE.Mesh(geometry, material);
+          sphere.position.copy(charge.position);
+          scene.add(sphere);
+
+          // Add charge label
+          const canvas = document.createElement("canvas");
+          const context = canvas.getContext("2d");
+          canvas.width = 256;
+          canvas.height = 128;
+          context.fillStyle = "#ffffff";
+          context.font = "Bold 24px Arial";
+          context.textAlign = "center";
+          context.fillText(charge.value > 0 ? `+q` : `-q`, 128, 64);
+
+          const texture = new THREE.CanvasTexture(canvas);
+          const labelMaterial = new THREE.SpriteMaterial({ map: texture });
+          const label = new THREE.Sprite(labelMaterial);
+          label.position.set(
+            charge.position.x,
+            charge.position.y + 1.5,
+            charge.position.z
+          );
+          label.scale.set(2, 1, 1);
+          scene.add(label);
+        });
+      }
+
+      /**
+       * Calculates the net electric field vector at a given point due to all charges.
+       * Uses Coulomb's Law: E = k * q / r^2 in the direction of r-hat.
+       *
+       * @param {THREE.Vector3} position - The 3D point where the electric field is calculated.
+       * @returns {THREE.Vector3} - Resulting electric field vector at that point.
+       */
+      function calculateElectricField(position) {
+        const electricField = new THREE.Vector3(0, 0, 0);
+
+        charges.forEach((charge) => {
+          const r = new THREE.Vector3().subVectors(position, charge.position);
+          // Avoids values too close to charge
+          const distance = Math.max(r.length(), 0.3);
+
+          const forceMagnitude = (k * charge.value) / (distance * distance);
+          const forceDirection = r.normalize();
+          const force = forceDirection.multiplyScalar(forceMagnitude);
+
+          electricField.add(force);
+        });
+
+        return electricField;
+      }
+
+      /**
+       * Visualizes electric field lines using seed points around charges.
+       * Integrates field vectors step-by-step to build line geometry.
+       */
+      function visualizeFieldLines() {
+        // Clear existing field lines
+        // (unnecessary, but good practice in case if edits require animation)
+        while (fieldLinesGroup.children.length > 0) {
+          fieldLinesGroup.remove(fieldLinesGroup.children[0]);
+        }
+
+        // Generate seed points for field lines
+        const seedPoints = [];
+        const numFieldLines = 16;
+
+        charges.forEach((charge) => {
+          for (let i = 0; i < numFieldLines; i++) {
+            // Create seeds around each charge
+            const phi = Math.acos(-1 + (2 * i) / numFieldLines);
+            const theta = Math.sqrt(numFieldLines * Math.PI) * phi;
+
+            const x = 0.8 * Math.sin(phi) * Math.cos(theta) + charge.position.x;
+            const y = 0.8 * Math.sin(phi) * Math.sin(theta) + charge.position.y;
+            const z = 0.8 * Math.cos(phi) + charge.position.z;
+
+            seedPoints.push(new THREE.Vector3(x, y, z));
+          }
+        });
+
+        // Create field lines
+        seedPoints.forEach((seedPoint) => {
+          const fieldLinePoints = [];
+          let currentPoint = seedPoint.clone();
+          let direction = new THREE.Vector3();
+
+          // Determine initial direction
+          const initialField = calculateElectricField(currentPoint);
+          direction.copy(initialField).normalize();
+
+          // Build the field line points
+          for (let i = 0; i < FIELD_LINE_POINTS; i++) {
+            fieldLinePoints.push(currentPoint.clone());
+
+            // Calculate field at current point
+            const electricField = calculateElectricField(currentPoint);
+            direction.copy(electricField).normalize();
+
+            // Move along the field direction
+            currentPoint.add(direction.multiplyScalar(0.2));
+          }
+
+          // Create the line
+          const geometry = new THREE.BufferGeometry().setFromPoints(
+            fieldLinePoints
+          );
+          const material = new THREE.LineBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.5,
+          });
+          const fieldLine = new THREE.Line(geometry, material);
+          fieldLinesGroup.add(fieldLine);
+        });
+      }
+
+      /**
+       * Visualizes electric field vectors in 3D space as arrow helpers.
+       * The arrow color ranges from blue (weak) to red (strong), and length is scaled logarithmically.
+       */
+      function visualizeFieldVectors() {
+        // Clear existing field vectors
+        // (again, unnecessary, but good practice in case anitmation is required)
+        while (fieldVectorsGroup.children.length > 0) {
+          fieldVectorsGroup.remove(fieldVectorsGroup.children[0]);
+        }
+
+        // Create a grid of field vectors
+        const gridSize = 10;
+        const spacing = 1.5;
+
+        for (let x = -gridSize / 2; x <= gridSize / 2; x++) {
+          for (let y = -gridSize / 2; y <= gridSize / 2; y++) {
+            for (let z = -gridSize / 2; z <= gridSize / 2; z++) {
+              const position = new THREE.Vector3(
+                x * spacing,
+                y * spacing,
+                z * spacing
+              );
+              const electricField = calculateElectricField(position);
+
+              if (electricField.length() < 1e-10) continue; // Skip near-zero fields
+
+              // Compute magnitude for scaling (log-scaling makes weak/strong fields more visible)
+              const magnitude = electricField.length();
+              const minStrength = 0.1;
+              const maxStrength = 1.0;
+
+              const scaledLength = THREE.MathUtils.clamp(
+                Math.log10(magnitude * 10), // scale log base 10 for visibility
+                minStrength, // minimum arrow length
+                maxStrength // maximum arrow length
+              );
+
+              // Normalize magnitude to a value between 0 (blue) and 1 (red)
+              const normalized = THREE.MathUtils.clamp(
+                (magnitude - minStrength) / (maxStrength - minStrength),
+                0,
+                1
+              );
+
+              // Create a color from red to blue
+              const arrowColor = new THREE.Color().lerpColors(
+                new THREE.Color(0x0000ff), // Blue (weak)
+                new THREE.Color(0xff0000), // Red (strong)
+                normalized
+              );
+
+              // FIXED head size
+              const headLength = 0.2;
+              const headWidth = 0.1;
+
+              const arrow = new THREE.ArrowHelper(
+                electricField.clone().normalize(),
+                position,
+                scaledLength,
+                arrowColor,
+                headLength,
+                headWidth
+              );
+              fieldVectorsGroup.add(arrow);
+            }
+          }
+        }
+      }
+
+      /**
+       *  Calculate and display numeric values
+       */
+      function updateNumericDisplays() {
+        // Calculate electric flux through a surface
+        const surfaceArea = 4 * Math.PI * (5 * 5); // Sphere with radius 5
+        const position = new THREE.Vector3(0, 0, 0);
+        const electricField = calculateElectricField(position);
+        const flux = electricField.length() * surfaceArea;
+
+        // Update Gauss's Law display
+        const gaussDisplay = document.getElementById("gauss-value");
+        if (gaussDisplay) {
+          gaussDisplay.textContent = flux.toExponential(2);
+        }
+
+        // Update charge display
+        let totalCharge = 0;
+        charges.forEach((charge) => {
+          totalCharge += charge.value;
+        });
+        const chargeDisplay = document.getElementById("charge-value");
+        if (chargeDisplay) {
+          chargeDisplay.textContent = totalCharge.toExponential(2);
+        }
+
+        // Update Coulomb's Law display
+        const r = new THREE.Vector3().subVectors(
+          charges[0].position,
+          charges[1].position
+        );
+        const distance = r.length();
+        const forceMagnitude =
+          (k * charges[0].value * charges[1].value) / (distance * distance);
+        const forceDisplay = document.getElementById("force-value");
+        if (forceDisplay) {
+          forceDisplay.textContent = forceMagnitude.toExponential(2);
+        }
+      }
+
+      // Create UI panels
+      function createUIPanels() {
+        // Create a container for numeric displays
+        const numericDisplay = document.createElement("div");
+        numericDisplay.id = "numeric-display";
+        numericDisplay.style.position = "absolute";
+        numericDisplay.style.top = "50px";
+        numericDisplay.style.left = "20px";
+        numericDisplay.style.background = "rgba(0, 0, 0, 0.7)";
+        numericDisplay.style.color = "white";
+        numericDisplay.style.fontFamily = "Arial, sans-serif";
+        numericDisplay.style.padding = "10px";
+        numericDisplay.style.borderRadius = "5px";
+        numericDisplay.style.fontSize = "14px";
+        numericDisplay.innerHTML = `
+                <h3>Electric Field Calculations</h3>
+                <div>Gauss's Law: Φ = <span id="gauss-value">0</span> Nm²/C</div>
+                <div>Total Charge: Q = <span id="charge-value">0</span> C (dipole configuration)</div>
+                <div>Coulomb Force: F = <span id="force-value">0</span> N</div>
+            `;
+        document.body.appendChild(numericDisplay);
+
+        // Create a container for vector field information
+        const fieldInfo = document.createElement("div");
+        fieldInfo.id = "field-info";
+        fieldInfo.style.position = "absolute";
+        fieldInfo.style.top = "50px";
+        fieldInfo.style.right = "20px";
+        fieldInfo.style.background = "rgba(0, 0, 0, 0.7)";
+        fieldInfo.style.color = "white";
+        fieldInfo.style.fontFamily = "Arial, sans-serif";
+        fieldInfo.style.padding = "10px";
+        fieldInfo.style.borderRadius = "5px";
+        fieldInfo.style.fontSize = "14px";
+        fieldInfo.innerHTML = `
+                <h3>Vector Field Information</h3>
+                <div>Red Arrows: Strong field strength</div>
+                <div>Blue Arrows: Weak field strength</div>
+                <div>White Lines: Electric field lines</div>
+            `;
+        document.body.appendChild(fieldInfo);
+      }
+
+      // Initialize the visualization
+      function initVisualization() {
+        visualizeFieldLines();
+        visualizeFieldVectors();
+        createUIPanels();
+        updateNumericDisplays();
+      }
+
+      // Handle window resize
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // Animation loop
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+
+      // Start the simulation
+      initVisualization();
+      animate();
+    </script>
+  </body>
+</html>
